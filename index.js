@@ -12,7 +12,7 @@ const app = express();
 const server = http.createServer(app);
 
 app.get("/",(req,res )=>{
-    req.send("Hye users")
+    res.send("Hye users")
 })
 
 /* 🔥 SOCKET.IO INIT (MISSING PART FIXED) */
