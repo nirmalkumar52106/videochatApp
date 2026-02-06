@@ -33,86 +33,80 @@ const io = new Server(server, {
 });
 
 /* 🔐 ONLINE USERS STORE (userId based) */
-let users = [];
+let onlineUsers = {};
 
-/* ================== AUTH MIDDLEWARE ================== */
-
-io.use((socket, next) => {
+/* 🔥 SOCKET CONNECTION */
+io.on("connection", async (socket) => {
   try {
-    const token = socket.handshake.auth.token;
-    if (!token) return next(new Error("No token"));
+    /* ================= AUTH ================= */
+    const token = socket.handshake.auth?.token;
+    if (!token) {
+      console.log("❌ No token");
+      return socket.disconnect();
+    }
 
-    // 🔑 SAME SECRET as login backend
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "secret123");
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id).select("name email");
 
-    socket.user = {
-      userId: decoded.id,
-      name: decoded.name
+    if (!user) {
+      console.log("❌ User not found");
+      return socket.disconnect();
+    }
+
+    console.log("✅ User connected:", user.name);
+
+    /* ================= SAVE ONLINE USER ================= */
+    onlineUsers[user._id] = {
+      userId: user._id.toString(),
+      name: user.name,
+      socketId: socket.id,
     };
 
-    next();
-  } catch (err) {
-    next(new Error("Authentication failed"));
-  }
-});
+    /* ================= SEND ONLINE USERS ================= */
+    io.emit("online-users", Object.values(onlineUsers));
 
-/* ================== SOCKET CONNECTION ================== */
+    /* ================= CALL USER ================= */
+    socket.on("call-user", ({ to, signal }) => {
+      const receiver = onlineUsers[to];
 
-io.on("connection", (socket) => {
-  console.log("Connected:", socket.user.userId, socket.id);
+      if (receiver) {
+        io.to(receiver.socketId).emit("call-user", {
+          from: user._id.toString(),
+          name: user.name,
+          signal,
+        });
+      }
+    });
 
-  /* ---------- ADD USER ---------- */
-  users.push({
-    userId: socket.user.userId,
-    name: socket.user.name,
-    socketId: socket.id
-  });
+    /* ================= ANSWER CALL ================= */
+    socket.on("answer-call", ({ to, signal }) => {
+      const caller = onlineUsers[to];
 
-  io.emit("online-users", users);
+      if (caller) {
+        io.to(caller.socketId).emit("call-accepted", signal);
+      }
+    });
 
-  /* ---------- CALL USER ---------- */
-  socket.on("call-user", ({ to, signal }) => {
-    const user = users.find(u => u.userId === to);
-
-    if (user) {
-      io.to(user.socketId).emit("call-user", {
-        from: socket.user.userId,
-        name: socket.user.name,
-        signal
-      });
-    }
-  });
-
-  /* ---------- ANSWER CALL ---------- */
-  socket.on("answer-call", ({ to, signal }) => {
-    const user = users.find(u => u.userId === to);
-
-    if (user) {
-      io.to(user.socketId).emit("call-accepted", signal);
-    }
-  });
-
-   socket.on("end-call", ({ to }) => {
+    /* ================= END CALL (OPTIONAL) ================= */
+    socket.on("end-call", ({ to }) => {
       const userToEnd = onlineUsers[to];
       if (userToEnd) {
         io.to(userToEnd.socketId).emit("call-ended");
       }
     });
 
-  /* ---------- DISCONNECT ---------- */
-  socket.on("disconnect", () => {
-    users = users.filter(u => u.socketId !== socket.id);
-    io.emit("online-users", users);
-    console.log("Disconnected:", socket.id);
-  });
-});
-
-    /* ================= END CALL (OPTIONAL) ================= */
-   
-
     /* ================= DISCONNECT ================= */
- 
+    socket.on("disconnect", () => {
+      console.log("❌ User disconnected:", user.name);
+      delete onlineUsers[user._id];
+      io.emit("online-users", Object.values(onlineUsers));
+    });
 
+  } catch (error) {
+    console.log("❌ Socket auth error:", error.message);
+    socket.disconnect();
+  }
+});
 
 /* ================= SERVER ================= */
 const PORT = process.env.PORT || 5000;
