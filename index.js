@@ -33,80 +33,86 @@ const io = new Server(server, {
 });
 
 /* 🔐 ONLINE USERS STORE (userId based) */
-let onlineUsers = {};
+let users = [];
 
-/* 🔥 SOCKET CONNECTION */
-io.on("connection", async (socket) => {
+/* ================== AUTH MIDDLEWARE ================== */
+
+io.use((socket, next) => {
   try {
-    /* ================= AUTH ================= */
-    const token = socket.handshake.auth?.token;
-    if (!token) {
-      console.log("❌ No token");
-      return socket.disconnect();
-    }
+    const token = socket.handshake.auth.token;
+    if (!token) return next(new Error("No token"));
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id).select("name email");
+    // 🔑 SAME SECRET as login backend
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || "secret123");
 
-    if (!user) {
-      console.log("❌ User not found");
-      return socket.disconnect();
-    }
-
-    console.log("✅ User connected:", user.name);
-
-    /* ================= SAVE ONLINE USER ================= */
-    onlineUsers[user._id] = {
-      userId: user._id.toString(),
-      name: user.name,
-      socketId: socket.id,
+    socket.user = {
+      userId: decoded.id,
+      name: decoded.name
     };
 
-    /* ================= SEND ONLINE USERS ================= */
-    io.emit("online-users", Object.values(onlineUsers));
+    next();
+  } catch (err) {
+    next(new Error("Authentication failed"));
+  }
+});
 
-    /* ================= CALL USER ================= */
-    socket.on("call-user", ({ to, signal }) => {
-      const receiver = onlineUsers[to];
+/* ================== SOCKET CONNECTION ================== */
 
-      if (receiver) {
-        io.to(receiver.socketId).emit("call-user", {
-          from: user._id.toString(),
-          name: user.name,
-          signal,
-        });
-      }
-    });
+io.on("connection", (socket) => {
+  console.log("Connected:", socket.user.userId, socket.id);
 
-    /* ================= ANSWER CALL ================= */
-    socket.on("answer-call", ({ to, signal }) => {
-      const caller = onlineUsers[to];
+  /* ---------- ADD USER ---------- */
+  users.push({
+    userId: socket.user.userId,
+    name: socket.user.name,
+    socketId: socket.id
+  });
 
-      if (caller) {
-        io.to(caller.socketId).emit("call-accepted", signal);
-      }
-    });
+  io.emit("online-users", users);
 
-    /* ================= END CALL (OPTIONAL) ================= */
-    socket.on("end-call", ({ to }) => {
+  /* ---------- CALL USER ---------- */
+  socket.on("call-user", ({ to, signal }) => {
+    const user = users.find(u => u.userId === to);
+
+    if (user) {
+      io.to(user.socketId).emit("call-user", {
+        from: socket.user.userId,
+        name: socket.user.name,
+        signal
+      });
+    }
+  });
+
+  /* ---------- ANSWER CALL ---------- */
+  socket.on("answer-call", ({ to, signal }) => {
+    const user = users.find(u => u.userId === to);
+
+    if (user) {
+      io.to(user.socketId).emit("call-accepted", signal);
+    }
+  });
+
+   socket.on("end-call", ({ to }) => {
       const userToEnd = onlineUsers[to];
       if (userToEnd) {
         io.to(userToEnd.socketId).emit("call-ended");
       }
     });
 
-    /* ================= DISCONNECT ================= */
-    socket.on("disconnect", () => {
-      console.log("❌ User disconnected:", user.name);
-      delete onlineUsers[user._id];
-      io.emit("online-users", Object.values(onlineUsers));
-    });
-
-  } catch (error) {
-    console.log("❌ Socket auth error:", error.message);
-    socket.disconnect();
-  }
+  /* ---------- DISCONNECT ---------- */
+  socket.on("disconnect", () => {
+    users = users.filter(u => u.socketId !== socket.id);
+    io.emit("online-users", users);
+    console.log("Disconnected:", socket.id);
+  });
 });
+
+    /* ================= END CALL (OPTIONAL) ================= */
+   
+
+    /* ================= DISCONNECT ================= */
+ 
+
 
 /* ================= SERVER ================= */
 const PORT = process.env.PORT || 5000;
