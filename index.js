@@ -27,8 +27,9 @@ app.use("/api/auth", require("./routes/authRoutes"));
 const io = new Server(server, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST"]
   },
+  transports: ["websocket"] // 🔥 FIX
 });
 
 /* 🔐 ONLINE USERS STORE (userId based) */
