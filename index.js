@@ -23,25 +23,28 @@ app.get("/", (req, res) => {
 // routes
 app.use("/api/auth", require("./routes/authRoutes"));
 
-/* 🔥 SOCKET.IO INIT */
+/* 🔥 SOCKET.IO INIT (FIXED) */
 const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
   },
-  transports: ["websocket"] // 🔥 FIX
+  transports: ["websocket", "polling"] // ✅ FIX (DO NOT REMOVE)
 });
 
-/* 🔐 ONLINE USERS STORE (userId based) */
+/* 🔐 ONLINE USERS STORE */
 let onlineUsers = {};
 
 /* 🔥 SOCKET CONNECTION */
 io.on("connection", async (socket) => {
   try {
+    console.log("🔌 Socket connected:", socket.id);
+
     /* ================= AUTH ================= */
     const token = socket.handshake.auth?.token;
+
     if (!token) {
-      console.log("❌ No token");
+      console.log("❌ No token provided");
       return socket.disconnect();
     }
 
@@ -56,7 +59,7 @@ io.on("connection", async (socket) => {
     console.log("✅ User connected:", user.name);
 
     /* ================= SAVE ONLINE USER ================= */
-    onlineUsers[user._id] = {
+    onlineUsers[user._id.toString()] = {
       userId: user._id.toString(),
       name: user.name,
       socketId: socket.id,
@@ -67,6 +70,8 @@ io.on("connection", async (socket) => {
 
     /* ================= CALL USER ================= */
     socket.on("call-user", ({ to, signal }) => {
+      console.log("📞 Call from", user._id.toString(), "to", to);
+
       const receiver = onlineUsers[to];
 
       if (receiver) {
@@ -80,6 +85,8 @@ io.on("connection", async (socket) => {
 
     /* ================= ANSWER CALL ================= */
     socket.on("answer-call", ({ to, signal }) => {
+      console.log("✅ Call answered by", user._id.toString());
+
       const caller = onlineUsers[to];
 
       if (caller) {
@@ -87,7 +94,7 @@ io.on("connection", async (socket) => {
       }
     });
 
-    /* ================= END CALL (OPTIONAL) ================= */
+    /* ================= END CALL ================= */
     socket.on("end-call", ({ to }) => {
       const userToEnd = onlineUsers[to];
       if (userToEnd) {
@@ -98,7 +105,7 @@ io.on("connection", async (socket) => {
     /* ================= DISCONNECT ================= */
     socket.on("disconnect", () => {
       console.log("❌ User disconnected:", user.name);
-      delete onlineUsers[user._id];
+      delete onlineUsers[user._id.toString()];
       io.emit("online-users", Object.values(onlineUsers));
     });
 
